@@ -104,6 +104,9 @@ class Gui:
     COLOR_RED = 19
     COLOR_GREEN = 20
 
+    GRAY_BASE = 50
+    GRAYS = 50
+
     def __init__(self, summery, state, disassmebler):
         self.S = summery
         self.state = state
@@ -130,11 +133,26 @@ class Gui:
             curses.init_color(self.COLOR_RED, 1000, 0, 0)
             curses.init_color(self.COLOR_GREEN, 0, 1000, 0)
 
+            for i in range(self.GRAYS):
+                curses.init_color(
+                    self.GRAY_BASE + i,
+                    i * 1000 // self.GRAYS,
+                    i * 1000 // self.GRAYS,
+                    i * 1000 // self.GRAYS
+                )
+                curses.init_pair(
+                    self.GRAY_BASE + i,
+                    self.GRAY_BASE + i,
+                    self.COLOR_BLACK
+                )
         curses.init_pair(self.BLACK, self.COLOR_BLACK, self.COLOR_BLACK)
         curses.init_pair(self.WHITE, self.COLOR_WHITE, self.COLOR_BLACK)
         curses.init_pair(self.BLUE, self.COLOR_BLUE, self.COLOR_BLACK)
         curses.init_pair(self.RED, self.COLOR_RED, self.COLOR_BLACK)
         curses.init_pair(self.GREEN, self.COLOR_GREEN, self.COLOR_BLACK)
+
+    def gray(self, scale):
+        return curses.color_pair(self.GRAY_BASE + int(round(scale * (self.GRAYS - 1))))
 
     def start(self):
         self.gui_thread = Thread(target=self.render)
@@ -170,26 +188,27 @@ class Gui:
                         self.stdscr.addstr(
                             top + i, left + 10 + 45, raw[:length*2], curses.color_pair(self.WHITE))
                         self.stdscr.addstr(
-                            top + i, left + 10 + 45 + length*2, raw[length*2:-2], curses.color_pair(self.BLACK))
+                            top + i, left + 10 + 45 + length*2, raw[length*2:-2], self.gray(0.5))
                     else:
                         self.stdscr.addstr(
-                            top + i, left, mnemonic, curses.color_pair(self.WHITE))
+                            top + i, left, mnemonic, self.gray(0.5))
                         self.stdscr.addstr(
-                            top + i, left + 10, op_str,  curses.color_pair(self.WHITE))
+                            top + i, left + 10, op_str,  self.gray(0.5))
                         self.stdscr.addstr(
-                            top + i, left + 10 + 45, raw[:length*2], curses.color_pair(self.WHITE))
+                            top + i, left + 10 + 45, raw[:length*2], self.gray(0.5))
                         self.stdscr.addstr(
-                            top + i, left + 10 + 45 + length*2, raw[length*2:-2], curses.color_pair(self.BLACK))
+                            top + i, left + 10 + 45 + length*2, raw[length*2:-2], self.gray(0.1))
             except RuntimeError:
                 pass
 
             try:
                 for i, r in enumerate(self.S.anomalies):
+                    line = self.S.AL - i - 1
                     raw, length = r
-                    self.stdscr.addstr(top + i + 30, left, raw[0:length*2],
+                    self.stdscr.addstr(top + line + 30, left, raw[0:length*2],
                                        curses.color_pair(self.RED))
-                    self.stdscr.addstr(top + i + 30, left + length*2,
-                                       raw[length*2:-2], curses.color_pair(self.BLACK))
+                    self.stdscr.addstr(top + line + 30, left + length*2,
+                                       raw[length*2:-2], self.gray(0.3))
             except RuntimeError:
                 pass
 
@@ -232,7 +251,7 @@ def cleanup(state, injector, sifter, gui):
         sifter.stop()
     if gui:
         gui.stop()
-
+    
     curses.nocbreak()
     curses.curs_set(1)
     curses.echo()

@@ -9,11 +9,12 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <unistd.h>
-
+#include <pthread.h>
 #include <capstone/capstone.h>
 
 #define PAGE_SIZE 4096
 #define MAX_INS_LENGTH 15
+#define MAX_OPCODE_LENGTH 3
 
 #if __x86_64__
 #define IP REG_RIP
@@ -39,14 +40,10 @@ struct
 {
     bool allow_dup_prefix;
     int max_prefix;
-    int jobs;
-    int core;
     output_t out;
 } config = {
     .allow_dup_prefix = false,
     .max_prefix = 1,
-    .jobs = 1,
-    .core = 0,
     .out = RAW,
 };
 
@@ -61,12 +58,6 @@ typedef struct
     uint8_t bytes[MAX_INS_LENGTH];
     int length;
 } insn_t;
-
-typedef struct
-{
-    insn_t ins;
-    char *mnemonic;
-} black_listed_ins_t;
 
 typedef struct
 {
@@ -97,16 +88,110 @@ uint64_t dummy_stack[256] __attribute__((aligned(PAGE_SIZE)));
 uint64_t stack[SIGSTKSZ];
 stack_t ss = {.ss_sp = stack, .ss_size = SIGSTKSZ};
 
+typedef struct
+{
+    insn_t ins;
+    char *mnemonic;
+} blacklisted_ins_t;
+
 #define BLACKLIST_SIZE 4
-black_listed_ins_t blacklist[BLACKLIST_SIZE] = {
+blacklisted_ins_t opcode_blacklist[BLACKLIST_SIZE] = {
     {.ins = {.bytes = {0x0f, 0x05}, .length = 2}, .mnemonic = "syscall"},
     {.ins = {.bytes = {0x0f, 0x34}, .length = 2}, .mnemonic = "sysenter"},
     {.ins = {.bytes = {0xcd, 0x80}, .length = 2}, .mnemonic = "int 0x80"},
     {.ins = {.bytes = {0x0f, 0xa1}, .length = 2}, .mnemonic = "pop fs"}};
 
+typedef struct
+{
+    char *prefix;
+    char *mnemonic;
+} blacklisted_pre_t;
+
+blacklisted_pre_t prefix_blacklist[] = {
+    {"\x64", "fs"}, //can't be fucked
+    {NULL, NULL}};
+
 csh capstone_handle;
 cs_insn *capstone_insn;
 int expected_length;
+
+pthread_mutex_t *output_mutex = NULL;
+
+#define LINE_BUFFER_SIZE 256
+#define BUFFER_LINES 16
+#define SYNC_LINES_STDOUT BUFFER_LINES
+#define SYNC_LINES_STDERR BUFFER_LINES
+char stdout_buffer[LINE_BUFFER_SIZE * BUFFER_LINES];
+char *stdout_buffer_end = stdout_buffer;
+int stdout_sync_counter = 0;
+char stderr_buffer[LINE_BUFFER_SIZE * BUFFER_LINES];
+char *stderr_buffer_end = stderr_buffer;
+int stderr_sync_counter = 0;
+
+void sync_fprintf(FILE *f, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    if (f == stdout)
+        stdout_buffer_end += vsprintf(stdout_buffer_end, format, args);
+    else if (f == stderr)
+        stderr_buffer_end += vsprintf(stderr_buffer_end, format, args);
+    else
+        assert(0);
+    va_end(args);
+}
+
+void sync_fwrite(const void *ptr, size_t size, size_t count, FILE *f)
+{
+    if (f == stdout)
+    {
+        memcpy(stdout_buffer_end, ptr, size * count);
+        stdout_buffer_end += size * count;
+    }
+    else if (f == stderr)
+    {
+        memcpy(stderr_buffer_end, ptr, size * count);
+        stderr_buffer_end += size * count;
+    }
+    else
+        assert(0);
+}
+
+void sync_fflush(FILE *f, bool force)
+{
+    if (f == stdout)
+    {
+        stdout_sync_counter++;
+        if (stdout_sync_counter == SYNC_LINES_STDOUT || force)
+        {
+            pthread_mutex_lock(output_mutex);
+
+            fwrite(stdout_buffer, stdout_buffer_end - stdout_buffer, 1, f);
+            fflush(f);
+
+            pthread_mutex_unlock(output_mutex);
+            stdout_buffer_end = stdout_buffer;
+            stdout_sync_counter = 0;
+        }
+    }
+    else if (f == stderr)
+    {
+        stderr_sync_counter++;
+        if (stderr_sync_counter == SYNC_LINES_STDERR || force)
+        {
+            pthread_mutex_lock(output_mutex);
+
+            fwrite(stderr_buffer, stderr_buffer_end - stderr_buffer, 1, f);
+            fflush(f);
+
+            pthread_mutex_unlock(output_mutex);
+            stderr_buffer_end = stderr_buffer;
+            stderr_sync_counter = 0;
+        }
+    }
+    else
+        assert(0);
+}
 
 void state_handler(int signum, siginfo_t *si, void *p)
 {
@@ -243,9 +328,9 @@ bool blacklisted()
 {
     for (int i = 0; i < BLACKLIST_SIZE; i++)
     {
-        for (int j = 0; j < MAX_INS_LENGTH - blacklist[i].ins.length; j++)
+        for (int j = 0; j < MAX_INS_LENGTH - opcode_blacklist[i].ins.length; j++)
         {
-            if (!memcmp(inj.ins.bytes + j, blacklist[i].ins.bytes, blacklist[i].ins.length))
+            if (!memcmp(inj.ins.bytes + j, opcode_blacklist[i].ins.bytes, opcode_blacklist[i].ins.length))
                 return true;
         }
     }
@@ -260,12 +345,12 @@ void print_disassemble(insn_t ins)
     if (cs_disasm_iter(capstone_handle, (const uint8_t **)&code, &code_size, &address, capstone_insn))
     {
         expected_length = (int)(address - (uintptr_t)aligned_buffer);
-        printf("\t%s %-45s (%02d)", capstone_insn->mnemonic, capstone_insn->op_str, expected_length);
+        sync_fprintf(stdout, "\t%s %-45s (%02d)", capstone_insn->mnemonic, capstone_insn->op_str, expected_length);
     }
     else
     {
         expected_length = (int)(address - (uintptr_t)aligned_buffer);
-        printf("\t%s %-45s (%02d)", "Unknown", "", expected_length);
+        sync_fprintf(stdout, "\t%s %-45s (%02d)", "Unknown", "", expected_length);
     }
 }
 
@@ -279,27 +364,29 @@ void print_result(insn_t ins)
     case TEXT:
         cs_disasm_iter(capstone_handle, (const uint8_t **)&code, &code_size, &address, capstone_insn);
         expected_length = (int)(address - (uintptr_t)aligned_buffer);
-        printf(" %s", expected_length == result.length ? " " : ".");
-        printf("r: (%02d) ", result.length);
+        sync_fprintf(stdout, " %s", expected_length == result.length ? " " : ".");
+        sync_fprintf(stdout, "r: (%02d) ", result.length);
         if (result.signum == SIGILL)
-            printf("sigill ");
+            sync_fprintf(stdout, "sigill ");
         if (result.signum == SIGSEGV)
-            printf("sigsegv");
+            sync_fprintf(stdout, "sigsegv");
         if (result.signum == SIGFPE)
-            printf("sigfpe ");
+            sync_fprintf(stdout, "sigfpe ");
         if (result.signum == SIGBUS)
-            printf("sigbus ");
+            sync_fprintf(stdout, "sigbus ");
         if (result.signum == SIGTRAP)
-            printf("sigtrap");
-        printf(" %3d ", result.si_code);
+            sync_fprintf(stdout, "sigtrap");
+        sync_fprintf(stdout, " %3d ", result.si_code);
 
-        printf("0x");
+        sync_fprintf(stdout, "0x");
         for (int i = 0; i < MAX_INS_LENGTH; i++)
         {
-            printf("%02x", ins.bytes[i]);
+            sync_fprintf(stdout, "%02x", ins.bytes[i]);
         }
+
         print_disassemble(ins);
-        printf("\n");
+        sync_fprintf(stdout, "\n");
+
         break;
     case RAW:
         if (cs_disasm_iter(capstone_handle, (const uint8_t **)&code, &code_size, &address, capstone_insn))
@@ -312,15 +399,18 @@ void print_result(insn_t ins)
             disas.length = 0;
             disas.valid = 0;
         }
-        fwrite(&disas, 1, sizeof(disas), stdout);
-        fwrite(&result, 1, sizeof(result), stdout);
-        fwrite(inj.ins.bytes, 1, MAX_INS_LENGTH, stdout);
-        fwrite("\0", 1, 1, stdout); //aligning
+        sync_fwrite(&disas, 1, sizeof(disas), stdout);
+        sync_fwrite(&result, 1, sizeof(result), stdout);
+        sync_fwrite(inj.ins.bytes, 1, MAX_INS_LENGTH, stdout);
+        sync_fwrite("\0", 1, 1, stdout); //aligning
+
         break;
 
     default:
         assert(0);
     }
+
+    sync_fflush(stdout, false);
 }
 
 bool is_prefix(uint8_t x)
@@ -362,6 +452,16 @@ bool has_dup_prefix()
     return false;
 }
 
+bool has_prefix(uint8_t *prefix)
+{
+    bool flag = false;
+    for (int i = 0; i < MAX_INS_LENGTH && is_prefix(inj.ins.bytes[i]); i++)
+        if (inj.ins.bytes[0] == *prefix)
+            flag = true;
+
+    return flag;
+}
+
 bool next_instruction()
 {
     if (result.length == 0)
@@ -371,6 +471,7 @@ bool next_instruction()
         inj.index++;
         //inj.index = result.length - 1;
     }
+    inj.last_len = result.length;
 
     inj.ins.bytes[inj.index]++;
 
@@ -379,6 +480,7 @@ bool next_instruction()
         inj.index--;
         if (inj.index >= 0)
             inj.ins.bytes[inj.index]++;
+        inj.last_len--;
     }
 
     if (blacklisted())
@@ -387,6 +489,15 @@ bool next_instruction()
         return next_instruction();
     }
 
+    int i = 0;
+    while (prefix_blacklist[i].prefix)
+    {
+        if (has_prefix((uint8_t *)prefix_blacklist[i].prefix))
+        {
+            return next_instruction();
+        }
+        i++;
+    }
     if (count_prefix() > config.max_prefix || (!config.allow_dup_prefix && has_dup_prefix()))
     {
         print_result(inj.ins);
@@ -400,6 +511,8 @@ int main(int argc, char **argv)
 {
     int i;
     void *unaligned_buffer;
+
+    assert(!pthread_mutex_init(output_mutex, NULL));
 
     unaligned_buffer = malloc(PAGE_SIZE * 3);
     aligned_buffer = (void *)(((uintptr_t)unaligned_buffer + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1)); //align the buffer on page
@@ -424,14 +537,17 @@ int main(int argc, char **argv)
             }
         }
 
-        inj.last_len = result.length;
         result.length = i;
-        inj.ins.length = i;
         print_result(inj.ins);
     }
+
+    sync_fflush(stdout, true);
     cs_free(capstone_insn, 1);
     cs_close(&capstone_handle);
 
     free(unaligned_buffer);
+
+    pthread_mutex_destroy(output_mutex);
+
     return 0;
 }
