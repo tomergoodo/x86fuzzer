@@ -1,15 +1,24 @@
 import subprocess
 import time
 import curses
+import os
 from threading import Thread
 from collections import deque
 from ctypes import *
 from capstone import *
 from binascii import hexlify
-
+from enum import Enum
+import copy
 
 INJECTOR = "./injector"
 
+
+OUTPUT = "./data/"
+LOG = OUTPUT + "log"
+
+class Output(Enum):
+    RAW = 1
+    TEXT = 2
 
 class State:
     running = True
@@ -32,6 +41,9 @@ class Summery:
     AL = 10
     instructions = deque(maxlen=IL)
     anomalies = deque(maxlen=AL)
+    count_anomalies = 0
+    count_instructions = 0
+    ad = {}
 
 
 class Injector:
@@ -43,8 +55,7 @@ class Injector:
 
     def start(self):
         self.command = f"{INJECTOR}"
-        self.process = subprocess.Popen(
-            [self.command], shell=True, stdout=subprocess.PIPE, stdin=subprocess.PIPE)
+        self.process = subprocess.Popen([self.command], stdout=subprocess.PIPE)
 
     def stop(self):
         self.process.terminate()
@@ -85,6 +96,8 @@ class Sifter:
                 if anomaly:
                     self.S.anomalies.append(
                         (hexlify(self.S.result.raw_ins), self.S.result.len))
+                    self.S.ad[hexlify(self.S.result.raw_ins)] = copy.deepcopy(self.S.result)
+                    self.S.count_anomalies += 1
             else:
                 if self.injector.process.poll() is not None:
                     self.state.running = False
@@ -176,6 +189,7 @@ class Gui:
                  self.S.result.len,
                  hexlify(self.S.result.raw_ins))
             )
+            self.S.count_instructions += 1
 
             try:
                 for i, r in enumerate(self.S.instructions):
@@ -184,23 +198,29 @@ class Gui:
                         self.stdscr.addstr(
                             top + i, left, mnemonic, curses.color_pair(self.WHITE))
                         self.stdscr.addstr(
-                            top + i, left + 10, op_str,  curses.color_pair(self.BLUE))
+                            top + i, left + 11, op_str,  curses.color_pair(self.BLUE))
                         self.stdscr.addstr(
-                            top + i, left + 10 + 45, raw[:length*2], curses.color_pair(self.WHITE))
+                            top + i, left + 11 + 45, raw[:length*2], curses.color_pair(self.WHITE))
                         self.stdscr.addstr(
-                            top + i, left + 10 + 45 + length*2, raw[length*2:-2], self.gray(0.5))
+                            top + i, left + 11 + 45 + length*2, raw[length*2:-2], self.gray(0.5))
                     else:
                         self.stdscr.addstr(
                             top + i, left, mnemonic, self.gray(0.5))
                         self.stdscr.addstr(
-                            top + i, left + 10, op_str,  self.gray(0.5))
+                            top + i, left + 11, op_str,  self.gray(0.5))
                         self.stdscr.addstr(
-                            top + i, left + 10 + 45, raw[:length*2], self.gray(0.5))
+                            top + i, left + 11 + 45, raw[:length*2], self.gray(0.5))
                         self.stdscr.addstr(
-                            top + i, left + 10 + 45 + length*2, raw[length*2:-2], self.gray(0.1))
+                            top + i, left + 11 + 45 + length*2, raw[length*2:-2], self.gray(0.1))
             except RuntimeError:
                 pass
 
+            self.stdscr.addstr(top + 26, left, "#", self.gray(0.5))
+            self.stdscr.addstr(top + 26, left + 2, f"{self.S.count_instructions}", curses.color_pair(self.WHITE))
+              
+            self.stdscr.addstr(top + 28, left, "#", self.gray(0.5))
+            self.stdscr.addstr(top + 28, left + 2, f"{self.S.count_anomalies}", curses.color_pair(self.RED))
+                
             try:
                 for i, r in enumerate(self.S.anomalies):
                     line = self.S.AL - i - 1
@@ -220,7 +240,6 @@ class Gui:
         while self.state.running:
             while self.state.paused:
                 self.check_key()
-                time.sleep(.1)
 
             self.check_key()
 
@@ -234,6 +253,7 @@ class Gui:
             self.state.paused = not self.state.paused
         elif c == ord("q"):
             self.state.running = False
+            self.state.paused = False
 
 
 def capstone_dissasembler(raw_ins):
@@ -243,7 +263,7 @@ def capstone_dissasembler(raw_ins):
     return 0, "Unknown", ""
 
 
-def cleanup(state, injector, sifter, gui):
+def cleanup(state, injector, sifter, gui, summery):
     state.running = False
     if injector:
         injector.stop()
@@ -251,12 +271,29 @@ def cleanup(state, injector, sifter, gui):
         sifter.stop()
     if gui:
         gui.stop()
-    
+
+    dump_anomalies(summery)
+
     curses.nocbreak()
     curses.curs_set(1)
     curses.echo()
     curses.endwin()
 
+output = Output.RAW
+
+def dump_anomalies(summery):
+    if not os.path.exists(OUTPUT):
+        os.mkdir(OUTPUT)
+    if output == Output.RAW:
+        with open(LOG, "wb") as f:
+            for k in sorted(list(summery.ad)):
+                f.write(summery.ad[k])
+    elif output == Output.TEXT:
+        with open(LOG, "w") as f:
+            for k in sorted(list(summery.ad)):
+                v = summery.ad[k]
+                f.write(
+                    f"{k[:v.len*2]} {int(v.len)} {int(v.signum)} {int(v.si_code)} {int(v.disas_len)}\n")
 
 def main():
     state = State()
@@ -275,7 +312,7 @@ def main():
     while state.running:
         time.sleep(.1)
 
-    cleanup(state, injector, sifter, gui)
+    cleanup(state, injector, sifter, gui, summery)
 
 
 if __name__ == "__main__":

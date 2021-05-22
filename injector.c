@@ -94,12 +94,14 @@ typedef struct
     char *mnemonic;
 } blacklisted_ins_t;
 
-#define BLACKLIST_SIZE 4
+#define BLACKLIST_SIZE 6
 blacklisted_ins_t opcode_blacklist[BLACKLIST_SIZE] = {
     {.ins = {.bytes = {0x0f, 0x05}, .length = 2}, .mnemonic = "syscall"},
     {.ins = {.bytes = {0x0f, 0x34}, .length = 2}, .mnemonic = "sysenter"},
     {.ins = {.bytes = {0xcd, 0x80}, .length = 2}, .mnemonic = "int 0x80"},
-    {.ins = {.bytes = {0x0f, 0xa1}, .length = 2}, .mnemonic = "pop fs"}};
+    {.ins = {.bytes = {0x0f, 0xa1}, .length = 2}, .mnemonic = "pop fs"},
+    {.ins = {.bytes = {0x0f, 0xb4}, .length = 2}, .mnemonic = "lfs"},
+    {.ins = {.bytes = {0x8e}, .length = 1}, .mnemonic = "mov segment"}};
 
 typedef struct
 {
@@ -127,6 +129,14 @@ int stdout_sync_counter = 0;
 char stderr_buffer[LINE_BUFFER_SIZE * BUFFER_LINES];
 char *stderr_buffer_end = stderr_buffer;
 int stderr_sync_counter = 0;
+
+bool is_prefix(uint8_t);
+
+
+
+
+
+
 
 void sync_fprintf(FILE *f, const char *format, ...)
 {
@@ -328,11 +338,12 @@ bool blacklisted()
 {
     for (int i = 0; i < BLACKLIST_SIZE; i++)
     {
-        for (int j = 0; j < MAX_INS_LENGTH - opcode_blacklist[i].ins.length; j++)
-        {
-            if (!memcmp(inj.ins.bytes + j, opcode_blacklist[i].ins.bytes, opcode_blacklist[i].ins.length))
-                return true;
-        }
+        int j;
+        for (j = 0; j < MAX_INS_LENGTH - opcode_blacklist[i].ins.length && is_prefix(inj.ins.bytes[j]); j++)
+            ;
+
+        if (!memcmp(inj.ins.bytes + j, opcode_blacklist[i].ins.bytes, opcode_blacklist[i].ins.length))
+            return true;
     }
     return false;
 }
@@ -485,7 +496,8 @@ bool next_instruction()
 
     if (blacklisted())
     {
-        print_result(inj.ins);
+        if (config.out == TEXT)
+            print_result(inj.ins);
         return next_instruction();
     }
 
@@ -500,7 +512,8 @@ bool next_instruction()
     }
     if (count_prefix() > config.max_prefix || (!config.allow_dup_prefix && has_dup_prefix()))
     {
-        print_result(inj.ins);
+        if (config.out == TEXT)
+            print_result(inj.ins);
         return next_instruction();
     }
 
