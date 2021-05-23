@@ -512,8 +512,7 @@ bool next_instruction()
     }
     if (count_prefix() > config.max_prefix || (!config.allow_dup_prefix && has_dup_prefix()))
     {
-        if (config.out == TEXT)
-            print_result(inj.ins);
+        print_result(inj.ins);
         return next_instruction();
     }
 

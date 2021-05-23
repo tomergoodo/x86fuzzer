@@ -7,15 +7,17 @@ import time
 DATA = "./data/"
 LOG = DATA + "log"
 
+# Undocumented instruction, Software bug, Hardware bug, 
 
 class Result:
     SIGNALS = {4: "sigill", 5: "sigtrap",
                7: "sigbus", 8: "sigfpe", 11: "sigsegv"}
 
-    def __init__(self, raw, valids, lengths, signums, sicodes, prefixes):
+    def __init__(self, raw, valids, lengths, disassembly_lengths, signums, sicodes, prefixes):
         self.raw = raw
         self.valids = valids
         self.lengths = lengths
+        self.dl = disassembly_lengths
         self.signums = signums
         self.signals = [self.SIGNALS[s] for s in signums]
         self.sicodes = sicodes
@@ -64,6 +66,7 @@ class Summery:
                 if striped in dict:
                     dict[striped].valids.add(self.current.valid)
                     dict[striped].lengths.add(self.current.len-count_prefixes)
+                    dict[striped].dl.add(self.current.disas_len if self.current.disas_len == 0 else self.current.disas_len-count_prefixes)
                     dict[striped].signums.add(self.current.signum)
                     dict[striped].sicodes.add(self.current.si_code)
                     dict[striped].prefixes.update(prefixes)
@@ -71,6 +74,7 @@ class Summery:
                     dict[striped] = Result(unhexlify(striped),
                                            set([int(self.current.valid)]),
                                            set([int(self.current.len-count_prefixes)]),
+                                           set([int(self.current.disas_len if self.current.disas_len == 0 else self.current.disas_len-count_prefixes)]),
                                            set([int(self.current.signum)]),
                                            set([int(self.current.si_code)]),
                                            set(prefixes))
@@ -199,62 +203,65 @@ class Gui:
             y = 0
             x = 50
             self.stdscr.addstr(y, x, "base:", curses.color_pair(self.RED))
-            self.stdscr.addstr(y+1, x, selected.base,
-                               curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+1, x, selected.base, curses.color_pair(self.WHITE))
 
-            self.stdscr.addstr(y+3, x, "prefixes", self.gray(0.5))
-            self.stdscr.addstr(
-                y+3, x+10, f"({','.join(sorted(selected.prefixes))})", curses.color_pair(self.WHITE))
-            self.stdscr.addstr(y+4, x, "valids", self.gray(0.5))
-            self.stdscr.addstr(
-                y+4, x+10, f"({','.join(map(str,selected.valids))})", curses.color_pair(self.WHITE))
-            self.stdscr.addstr(y+5, x, "lengths", self.gray(0.5))
-            self.stdscr.addstr(
-                y+5, x+10, f"({','.join(map(str,selected.lengths))})", curses.color_pair(self.WHITE))
-            self.stdscr.addstr(y+6, x, "signums", self.gray(0.5))
-            self.stdscr.addstr(
-                y+6, x+10, f"({','.join(map(str,selected.signums))})", curses.color_pair(self.WHITE))
-            self.stdscr.addstr(y+7, x, "sicodes", self.gray(0.5))
-            self.stdscr.addstr(
-                y+7, x+10, f"({','.join(map(str,selected.sicodes))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+3, x, "prefixes:", self.gray(0.5))
+            self.stdscr.addstr(y+3, x+15, f"({','.join(sorted(selected.prefixes))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+4, x, "valids:", self.gray(0.5))
+            self.stdscr.addstr(y+4, x+15, f"({','.join(map(str,selected.valids))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+5, x, "lengths:", self.gray(0.5))
+            self.stdscr.addstr(y+5, x+15, f"({','.join(map(str,selected.lengths))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+6, x, "signums:", self.gray(0.5))
+            self.stdscr.addstr(y+6, x+15, f"({','.join(map(str,selected.signums))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+7, x, "sicodes:", self.gray(0.5))
+            self.stdscr.addstr(y+7, x+15, f"({','.join(map(str,selected.sicodes))})", curses.color_pair(self.WHITE))
         elif type(selected) is Result:
             y = 0
             x = 50
             self.stdscr.addstr(y, x, "instruction:",
                                curses.color_pair(self.RED))
-            self.stdscr.addstr(
-                y+1, x, hexlify(selected.raw).decode(), curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+1, x, hexlify(selected.raw).decode(), curses.color_pair(self.WHITE))
 
-            self.stdscr.addstr(y+3, x, "prefixes", self.gray(0.5))
-            self.stdscr.addstr(
-                y+3, x+10, f"({','.join(sorted(selected.prefixes))})", curses.color_pair(self.WHITE))
-            self.stdscr.addstr(y+4, x, "valids", self.gray(0.5))
-            self.stdscr.addstr(
-                y+4, x+10, f"({','.join(map(str,selected.valids))})", curses.color_pair(self.WHITE))
-            self.stdscr.addstr(y+5, x, "lengths", self.gray(0.5))
-            self.stdscr.addstr(
-                y+5, x+10, f"({','.join(map(str,selected.lengths))})", curses.color_pair(self.WHITE))
-            self.stdscr.addstr(y+6, x, "signums", self.gray(0.5))
-            self.stdscr.addstr(
-                y+6, x+10, f"({','.join(map(str,selected.signums))})", curses.color_pair(self.WHITE))
-            self.stdscr.addstr(y+7, x, "signals", self.gray(0.5))
-            self.stdscr.addstr(
-                y+7, x+10, f"({','.join(selected.signals)})", curses.color_pair(self.WHITE))
-            self.stdscr.addstr(y+8, x, "sicodes", self.gray(0.5))
-            self.stdscr.addstr(
-                y+8, x+10, f"({','.join(map(str,selected.sicodes))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+3, x, "prefixes:", self.gray(0.5))
+            self.stdscr.addstr(y+3, x+15, f"({','.join(sorted(selected.prefixes))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+4, x, "valids:", self.gray(0.5))
+            self.stdscr.addstr(y+4, x+15, f"({','.join(map(str,selected.valids))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+5, x, "lengths:", self.gray(0.5))
+            self.stdscr.addstr(y+5, x+15, f"({','.join(map(str,selected.lengths))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+6, x, "disas lengths:", self.gray(0.5))
+            self.stdscr.addstr(y+6, x+15, f"({','.join(map(str,selected.dl))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+7, x, "signums:", self.gray(0.5))
+            self.stdscr.addstr(y+7, x+15, f"({','.join(map(str,selected.signums))})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+8, x, "signals:", self.gray(0.5))
+            self.stdscr.addstr(y+8, x+15, f"({','.join(selected.signals)})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+9, x, "sicodes:", self.gray(0.5))
+            self.stdscr.addstr(y+9, x+15, f"({','.join(map(str,selected.sicodes))})", curses.color_pair(self.WHITE))
 
-            self.stdscr.addstr(y+10, x, "disassembly:",
-                               curses.color_pair(self.RED))
-            self.stdscr.addstr(y+11, x, "capstone:", self.gray(0.5))
+            self.stdscr.addstr(y+11, x, "disassembly:", curses.color_pair(self.RED))
+            self.stdscr.addstr(y+12, x, "capstone:", self.gray(0.5))
 
             size, mnemonic, op_str = capstone_dissasembler(selected.raw)
             if op_str:
-                self.stdscr.addstr(
-                    y+12, x, f"\t({mnemonic} {op_str})", curses.color_pair(self.WHITE))
+                self.stdscr.addstr(y+13, x, f"\t({mnemonic} {op_str})", curses.color_pair(self.WHITE))
             else:
-                self.stdscr.addstr(
-                    y+12, x, f"\t({mnemonic})", curses.color_pair(self.WHITE))
+                self.stdscr.addstr(y+13, x, f"\t({mnemonic})", curses.color_pair(self.WHITE))
+            self.stdscr.addstr(y+14, x+2, f"size:  ({size})",self.gray(0.5))
+
+            self.stdscr.addstr(y+16, x, "analysis:", curses.color_pair(self.RED))
+            (length,) = selected.lengths
+            (dl,) = selected.dl
+            analysis = ""
+            if size == 0:
+                analysis = "Undocumented Instruction"
+            elif length != size:
+                analysis = "Software Bug"
+            elif dl == 0:
+                analysis = "Previosly Undocumented Instruction"
+            elif length != dl:
+                analysis = "Old Software Bug"
+            else:
+                analysis = "??"
+            self.stdscr.addstr(y+17, x+2, analysis, curses.color_pair(self.WHITE))
 
     def render(self):
         while self.running:
