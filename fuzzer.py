@@ -7,7 +7,6 @@ from collections import deque
 from ctypes import *
 from capstone import *
 from binascii import hexlify
-from enum import Enum
 import copy
 
 INJECTOR = "./injector"
@@ -15,10 +14,6 @@ INJECTOR = "./injector"
 
 OUTPUT = "./data/"
 LOG = OUTPUT + "log"
-
-class Output(Enum):
-    RAW = 1
-    TEXT = 2
 
 class State:
     running = True
@@ -98,6 +93,7 @@ class Sifter:
                         (hexlify(self.S.result.raw_ins), self.S.result.len))
                     self.S.ad[hexlify(self.S.result.raw_ins)] = copy.deepcopy(self.S.result)
                     self.S.count_anomalies += 1
+                self.S.count_instructions += 1
             else:
                 if self.injector.process.poll() is not None:
                     self.state.running = False
@@ -189,7 +185,6 @@ class Gui:
                  self.S.result.len,
                  hexlify(self.S.result.raw_ins))
             )
-            self.S.count_instructions += 1
 
             try:
                 for i, r in enumerate(self.S.instructions):
@@ -279,21 +274,12 @@ def cleanup(state, injector, sifter, gui, summery):
     curses.echo()
     curses.endwin()
 
-output = Output.RAW
-
 def dump_anomalies(summery):
     if not os.path.exists(OUTPUT):
         os.mkdir(OUTPUT)
-    if output == Output.RAW:
-        with open(LOG, "wb") as f:
-            for k in sorted(list(summery.ad)):
-                f.write(summery.ad[k])
-    elif output == Output.TEXT:
-        with open(LOG, "w") as f:
-            for k in sorted(list(summery.ad)):
-                v = summery.ad[k]
-                f.write(
-                    f"{k[:v.len*2]} {int(v.len)} {int(v.signum)} {int(v.si_code)} {int(v.disas_len)}\n")
+    with open(LOG, "wb") as f:
+        for k in sorted(list(summery.ad)):
+            f.write(summery.ad[k])
 
 def main():
     state = State()

@@ -3,5 +3,5 @@ injector
 .vscode
 .gdb*
 test*
-data
 __pycache__
+log

@@ -7,7 +7,6 @@ import time
 DATA = "./data/"
 LOG = DATA + "log"
 
-# Undocumented instruction, Software bug, Hardware bug, 
 
 class Result:
     SIGNALS = {4: "sigill", 5: "sigtrap",
@@ -25,9 +24,9 @@ class Result:
 
 
 class Catalog:
-    def __init__(self, d={}, v=[], collapsed=True, base="", count=0, valids=(), lengths=(), signums=(), sicodes=(), prefixes=()):
+    def __init__(self, d={}, r=None, collapsed=True, base="", count=0, valids=(), lengths=(), signums=(), sicodes=(), prefixes=()):
         self.dict = d  # son catalogs
-        self.values = v  # instruction in my index level
+        self.result = r  # instruction in my index level
         self.collapsed = collapsed
         self.base = base
 
@@ -90,26 +89,26 @@ def build_catalog(instructions, index, base):
     sicodes = merge_sets(instructions, 'sicodes')
     prefixes = merge_sets(instructions, 'prefixes')
 
-    c = Catalog({}, [], True, base, len(instructions),
+    c = Catalog({}, None, True, base, len(instructions),
                 valids, lengths, signums, sicodes, prefixes)
 
     for i in instructions:
         if len(i.raw) > index:
-            b = hexlify(i.raw[index:index+1]).decode()
-            if b in c.dict:
-                c.dict[b].append(i)
+            byte = hexlify(i.raw[index:index+1]).decode()
+            if byte in c.dict:
+                c.dict[byte].append(i)
             else:
-                c.dict[b] = [i]
+                c.dict[byte] = [i]
         else:
-            c.values.append(i)
-    for b in c.dict:
-        c.dict[b] = build_catalog(c.dict[b], index+1, base+b)
+            c.result = i
+    for byte in c.dict:
+        c.dict[byte] = build_catalog(c.dict[byte], index+1, base+byte)
     return c
 
 
 def get_leaf(c):
-    if c.values:
-        return c.values[0]
+    if c.result:
+        return c.result
     return get_leaf(list(c.dict.values())[0])
 
 
@@ -121,9 +120,9 @@ def build_text_catalog(c, index=0, text=[], lookup={}):
             ".." * (max(c.lengths) - min(c.lengths))
         text.append("  "*index+"> "+c.base+suffix)
         if not c.collapsed:
-            for v in sorted(c.values):
-                lookup[len(text)] = v
-                text.append("  "*index+"  "+hexlify(v.raw).decode())
+            if c.result:
+                lookup[len(text)] = c.result
+                text.append("  "*index+"  "+hexlify(c.result.raw).decode())
             for b in sorted(c.dict):
                 build_text_catalog(c.dict[b], index+1, text, lookup)
     else:
@@ -256,7 +255,7 @@ class Gui:
             elif length != size:
                 analysis = "Software Bug"
             elif dl == 0:
-                analysis = "Previosly Undocumented Instruction"
+                analysis = "Previously Undocumented Instruction"
             elif length != dl:
                 analysis = "Old Software Bug"
             else:

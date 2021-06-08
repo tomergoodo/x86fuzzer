@@ -49,7 +49,7 @@ struct
 
 void *aligned_buffer;
 char *ins_start;
-extern void *resume, *pre_instruction_start, *pre_instruction_end;
+extern void *resume, *set_tf_start, *set_tf_end;
 
 mcontext_t fault_context;
 
@@ -131,11 +131,6 @@ char *stderr_buffer_end = stderr_buffer;
 int stderr_sync_counter = 0;
 
 bool is_prefix(uint8_t);
-
-
-
-
-
 
 
 void sync_fprintf(FILE *f, const char *format, ...)
@@ -240,27 +235,27 @@ void configure_handler(void (*handler)(int, siginfo_t *, void *))
 }
 
 //set the trap flag.
-void pre_instruction()
+void set_tf()
 {
 #if __x86_64__
     __asm__ __volatile__("\
-                        .global pre_instruction_start \n\
-                        pre_instruction_start: \n\
+                        .global set_tf_start \n\
+                        set_tf_start: \n\
                         pushfq \n\
                         orq $0x0100,(%rsp) \n\
                         popfq \n\
-                        .global pre_instruction_end \n\
-                        pre_instruction_end: \n\
+                        .global set_tf_end \n\
+                        set_tf_end: \n\
                         ");
 #else
     __asm__ __volatile__("\
-                        .global pre_instruction_start \n\
-                        pre_instruction_start: \n\
+                        .global set_tf_start \n\
+                        set_tf_start: \n\
                         pushfl \n\
                         orl $0x0100,(%esp) \n\
                         popfl \n\
-                        .global pre_instruction_end \n\
-                        pre_instruction_end: \n\
+                        .global set_tf_end \n\
+                        set_tf_end: \n\
                         ");
 #endif
 }
@@ -268,16 +263,16 @@ void pre_instruction()
 void inject(int ins_size)
 {
     int i;
-    int pre_instruction_len = ((uintptr_t)&pre_instruction_end - (uintptr_t)&pre_instruction_start);
-    ins_start = aligned_buffer + PAGE_SIZE - ins_size - pre_instruction_len;
-    for (i = 0; i < pre_instruction_len; i++)
+    int set_tf_len = ((uintptr_t)&set_tf_end - (uintptr_t)&set_tf_start);
+    ins_start = aligned_buffer + PAGE_SIZE - ins_size - set_tf_len;
+    for (i = 0; i < set_tf_len; i++)
     {
-        ins_start[i] = ((char *)&pre_instruction_start)[i];
+        ins_start[i] = ((char *)&set_tf_start)[i];
     }
 
     for (i = 0; i < MAX_INS_LENGTH; i++)
     {
-        (ins_start + pre_instruction_len)[i] = inj.ins.bytes[i];
+        (ins_start + set_tf_len)[i] = inj.ins.bytes[i];
     }
 
     configure_handler(state_handler);
@@ -480,7 +475,6 @@ bool next_instruction()
     if (result.length - 1 > inj.index && inj.last_len != result.length)
     {
         inj.index++;
-        //inj.index = result.length - 1;
     }
     inj.last_len = result.length;
 
