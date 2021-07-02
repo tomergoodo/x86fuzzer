@@ -9,6 +9,7 @@ from capstone import *
 from binascii import hexlify
 import copy
 
+
 INJECTOR = "./injector"
 
 
@@ -50,7 +51,7 @@ class Injector:
 
     def start(self):
         self.command = f"{INJECTOR}"
-        self.process = subprocess.Popen([self.command], stdout=subprocess.PIPE)
+        self.process = subprocess.Popen([self.command], shell=True, stdout=subprocess.PIPE)
 
     def stop(self):
         self.process.terminate()
@@ -280,6 +281,7 @@ def dump_anomalies(summery):
     with open(LOG, "wb") as f:
         for k in sorted(list(summery.ad)):
             f.write(summery.ad[k])
+
 
 def main():
     state = State()

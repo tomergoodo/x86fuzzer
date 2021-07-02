@@ -5,7 +5,7 @@ import curses
 import time
 
 DATA = "./data/"
-LOG = DATA + "log"
+LOG = DATA + "core-i7-8565U-log"
 
 
 class Result:
@@ -38,14 +38,14 @@ class Catalog:
         self.prefixes = prefixes
 
 
-class Summery:
+class Summary:
     def __init__(self):
         self.current = InjectorResults()
         self.catalog = None
         self.text = None
         self.lookup = None
 
-    def summerize(self):
+    def summarize(self):
         instructions = self.read_file()
         self.catalog = build_catalog(instructions, 0, '')
         self.catalog.collapsed = False
@@ -149,8 +149,8 @@ class Gui:
     GRAY_BASE = 50
     GRAYS = 50
 
-    def __init__(self, summery):
-        self.S = summery
+    def __init__(self, summary):
+        self.S = summary
         self.running = True
         self.selected = 0
 
@@ -341,10 +341,10 @@ def is_prefix(x):
 
 
 def main():
-    summery = Summery()
-    summery.summerize()
+    summary = Summary()
+    summary.summarize()
 
-    gui = Gui(summery)
+    gui = Gui(summary)
     gui.render()
 
     curses.nocbreak()
